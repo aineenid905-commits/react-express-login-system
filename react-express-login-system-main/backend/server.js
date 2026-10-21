@@ -1,163 +1,283 @@
-const path = require('path');
-const dotenv = require('dotenv');
 
-const result = dotenv.config({ path: path.join(__dirname, '.env') });
+const dns = require('dns');
+dns.setServers(['8.8.8.8', '8.8.4.4']);
 
 const express = require('express');
-const app = express();
-const port = process.env.PORT || 3001;
 const cors = require('cors');
-const bodyParser = require('body-parser');
+const { MongoClient, ObjectId } = require('mongodb');
 const session = require('express-session');
-const { MongoClient } = require('mongodb');
+const MongoStore = require('connect-mongo').default;
 const bcrypt = require('bcrypt');
-const saltRounds = 10;
-const sanitizeHtml = require('sanitize-html');
+require('dotenv').config();
 
+const app = express();
+const PORT = process.env.PORT || 3001;
+const uri = process.env.MONGO_URI;
 
-const corsOptions = {
-  origin: 'http://localhost:5173',
-  credentials: true,
-  optionsSuccessStatus: 200
-};
+let client;
+let users;
 
-app.use(cors(corsOptions));
-
-app.use(bodyParser.json());
-
-app.use(express.urlencoded({ extended: false }));
-
-app.use(session({
-  secret: 'something',
-  resave: false,
-  saveUninitialized: false,
+app.use(cors({
+    origin: [
+        'http://localhost:5173',
+        'http://localhost:5174'
+    ],
+    credentials: true
 }));
 
-app.use(express.static(path.join(__dirname, '/dist')));
+app.use(express.json());
 
-const uri = process.env.MONGO_URI;
-let client;
-
-async function connectDB() {
-  try {
-    client = new MongoClient(uri);
-    await client.connect();
-    console.log('Connected to MongoDB Atlas');
-  } catch (error) {
-    console.error('Failed to connect to MongoDB Atlas', error);
-  }
-}
-
-connectDB();
+app.use(session({
+    name: 'login.sid',
+    secret: process.env.SESSION_SECRET || 'replace-this-with-a-long-random-secret',
+    resave: false,
+    saveUninitialized: false,
+    store: MongoStore.create({
+        mongoUrl: uri,
+        dbName: 'loginDB',
+        collectionName: 'sessions'
+    }),
+    cookie: {
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000
+    }
+}));
 
 app.get('/', (req, res) => {
-  res.send('Hello World!')
+    res.send('Backend is running!');
 });
 
-app.get('/profile', (req, res) => {
-  if (!req.session.email) {
-    return res.status(200).send({ message: 'Not logged in' });
-  } else {
-    return res.send({ email: req.session.email, name: req.session.name });
-  }
+// Register a new user
+app.post('/register', async (req, res) => {
+    try {
+        const { name, email, password, confirmPassword } = req.body;
+
+        if (!name || !email || !password || !confirmPassword) {
+            return res.status(400).json({
+                success: false,
+                message: 'Please fill in all fields.'
+            });
+        }
+
+        if (password !== confirmPassword) {
+            return res.status(400).json({
+                success: false,
+                message: 'Passwords do not match.'
+            });
+        }
+
+        if (password.length < 8) {
+            return res.status(400).json({
+                success: false,
+                message: 'Password must be at least 8 characters.'
+            });
+        }
+
+        const normalizedEmail = email.trim().toLowerCase();
+
+        const existingUser = await users.findOne({
+            email: normalizedEmail
+        });
+
+        if (existingUser) {
+            return res.status(409).json({
+                success: false,
+                message: 'An account with this email already exists.'
+            });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 12);
+
+        const result = await users.insertOne({
+            name: name.trim(),
+            email: normalizedEmail,
+            password: hashedPassword,
+            createdAt: new Date()
+        });
+
+        req.session.userId = result.insertedId.toString();
+
+        req.session.save((error) => {
+            if (error) {
+                console.error('Session save error:', error);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Account created, but session setup failed. Please log in.'
+                });
+            }
+
+            return res.status(201).json({
+                success: true,
+                message: 'Registration successful.',
+                user: {
+                    id: result.insertedId.toString(),
+                    name: name.trim(),
+                    email: normalizedEmail
+                }
+            });
+        });
+    } catch (error) {
+        console.error('Registration error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Registration failed. Please try again.'
+        });
+    }
 });
 
-function sanitizeInput(input) {
-  return sanitizeHtml(input, {
-    allowedTags: [],  
-    allowedAttributes: {},  
-  });
+// Log in an existing user
+app.post('/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        if (!email || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email and password are required.'
+            });
+        }
+
+        const user = await users.findOne({
+            email: email.trim().toLowerCase()
+        });
+
+        if (!user || !user.password) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid email or password.'
+            });
+        }
+
+        const validPassword = await bcrypt.compare(
+            password,
+            user.password
+        );
+
+        if (!validPassword) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid email or password.'
+            });
+        }
+
+        req.session.userId = user._id.toString();
+
+        req.session.save((error) => {
+            if (error) {
+                console.error('Login session error:', error);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Could not create login session.'
+                });
+            }
+
+            return res.json({
+                success: true,
+                message: 'Login successful.',
+                user: {
+                    id: user._id.toString(),
+                    name: user.name,
+                    email: user.email
+                }
+            });
+        });
+    } catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'An error occurred during login.'
+        });
+    }
+});
+
+// Return the currently logged-in user's profile
+app.get('/profile', async (req, res) => {
+    try {
+        if (!req.session.userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Please log in.'
+            });
+        }
+
+        if (!ObjectId.isValid(req.session.userId)) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid session. Please log in again.'
+            });
+        }
+
+        const user = await users.findOne(
+            { _id: new ObjectId(req.session.userId) },
+            { projection: { password: 0 } }
+        );
+
+        if (!user) {
+            return res.status(401).json({
+                success: false,
+                message: 'User not found. Please log in again.'
+            });
+        }
+
+        res.json({
+            id: user._id.toString(),
+            name: user.name,
+            email: user.email
+        });
+    } catch (error) {
+        console.error('Profile error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Could not load profile.'
+        });
+    }
+});
+
+// Log out
+app.post('/logout', (req, res) => {
+    req.session.destroy((error) => {
+        if (error) {
+            console.error('Logout error:', error);
+            return res.status(500).json({
+                success: false,
+                message: 'Logout failed.'
+            });
+        }
+
+        res.clearCookie('login.sid');
+        res.json({
+            success: true,
+            message: 'Logged out successfully.'
+        });
+    });
+});
+
+async function startServer() {
+    try {
+        if (!uri) {
+            throw new Error('MONGO_URI is missing from your .env file.');
+        }
+
+        client = new MongoClient(uri);
+        await client.connect();
+
+        const db = client.db('loginDB');
+        users = db.collection('users');
+
+        await users.createIndex({ email: 1 }, { unique: true });
+
+        console.log('Connected to MongoDB Atlas successfully');
+
+        app.listen(PORT, () => {
+            console.log(`Example app listening on port ${PORT}`);
+        });
+    } catch (error) {
+        console.error('Server startup failed:', error.message);
+        process.exit(1);
+    }
 }
 
-app.post('/login', async (req, res) => {
-  let email = req.body.email;
-  let password = req.body.password;
+startServer();
 
-  email = sanitizeInput(email);
-  password = sanitizeInput(password);
-
-  try {
-    const database = client.db('login-system');
-    const usersCollection = database.collection('users');
-
-    const user = await usersCollection.findOne({ email: email });
-
-    if (user) {
-      const match = await bcrypt.compare(password, user.password);
-
-      if (match) {
-        req.session.name = user.name;
-        req.session.email = email; 
-        res.send({ success: true, user }); 
-      } else {
-        res.status(400).send({ success: false, message: 'Incorrect email and password' }); 
-      }
-    } else {
-      res.status(400).send({ success: false, message: 'User not found' }); 
-    }
-  } catch (error) {
-    console.error(error);
-    res.status(500).send({ success: false, message: 'Error during the login process' });
-  }
-});
-
-app.post('/register', async (req, res) => {
-  let name = req.body.name;
-  let email = req.body.email;
-  let password = req.body.password;
-  let confirmPassword = req.body.confirmPassword;
-
-  name = sanitizeInput(name);
-  email = sanitizeInput(email);
-  password = sanitizeInput(password);
-  confirmPassword = sanitizeInput(confirmPassword);
-
-  if (password !== confirmPassword) {
-    return res.status(400).send({ success: false, message: 'Passwords do not match.' }); 
-  } 
-    const database = client.db('login-system');
-    const usersCollection = database.collection('users');
-    const userExists = await usersCollection.findOne({ email: email });
-
-      if (userExists) {
-        return res.status(400).send({ success: false, message: 'Email already exists.'});
-      }
-
-      try {
-        const hashedPassword = await bcrypt.hash(password, saltRounds);
-
-        const newUser = {
-          name: name, 
-          email: email,
-          password: hashedPassword
-        };
-
-        const result = await usersCollection.insertOne(newUser);
-
-        console.log("User added!");
-
-        req.session.name = name;
-        req.session.email = email;
-
-       return  res.status(201).send({ success: true, message: 'Registration successful!', user: newUser});
-
-      } catch (error) { 
-        console.error(error);
-       return  res.status(500).send({ success: false, message: 'Error during the registration.'});
-      }
-      
-});
-
-app.post('/logout', (req, res) => {
-  if (!req.session.email) {
-    res.send('Already logged out');
-  }
-  req.session.destroy(function () {
-    res.send('Logged out!');
-    console.log('User logged out');
-  });
-});
-
-app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
-});
