@@ -7,15 +7,32 @@ function AuthProvider({ children }) {
     const [user, setUser] = useState(null);
 
     async function register(name, email, password, confirmPassword) {
-        try {
-            const response = await axios.post('http://localhost:3001/register', { name, email, password, confirmPassword }, { withCredentials: true });
+        
+      
+async function register(name, email, password, confirmPassword) {
+    try {
+        const response = await axios.post(
+            `${import.meta.env.VITE_API_URL}/register`,
+            { name, email, password, confirmPassword },
+            { withCredentials: true }
+        );
 
-            if (response.data.success) {
-                setUser(response.data.user); 
-            } else {
-                alert(response.data.message || "An error occurred");
-            }
-        } catch (error) {
+        if (response.data.success) {
+            setUser(response.data.user);
+        } else {
+            alert(response.data.message || "An error occurred");
+        }
+    } catch (error) {
+        console.error("Registration error:", error);
+        alert(
+            error.response?.data?.message ||
+            error.message ||
+            "An error occurred"
+        );
+    }
+}
+
+
             if (error.response && error.response.data) {
                 alert(error.response.data.message || "An error occurred");
             } else {
@@ -27,7 +44,12 @@ function AuthProvider({ children }) {
 
     async function login(email, password) {
         try {
-            const response = await axios.post('http://localhost:3001/login', { email, password }, { withCredentials: true });
+          const response = await axios.post(
+  `${import.meta.env.VITE_API_URL}/login`,
+  { email, password },
+  { withCredentials: true }
+);
+
 
             if (response.data.success) {
                 setUser(response.data.user); 
@@ -47,7 +69,12 @@ function AuthProvider({ children }) {
 
     async function logout() {
         setUser(null);
-        const response = await axios.post('http://localhost:3001/logout', {}, { withCredentials: true });
+     
+        const response = await axios.post(
+  `${import.meta.env.VITE_API_URL}/logout`,
+  {},
+  { withCredentials: true }
+);
 
         if (response.data.success) {
             alert('User logged out');
