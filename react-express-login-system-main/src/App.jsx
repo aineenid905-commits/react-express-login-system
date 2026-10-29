@@ -42,7 +42,21 @@ function App() {
         };
     }, [setUser]);
 
-    return user ? <Protected /> : <Login />;
+    return (
+        <div className="app-container">
+            <main className="app-content">
+                {user ? <Protected /> : <Login />}
+            </main>
+
+            <footer className="site-footer">
+                <p><p>Developed by Aine Enid,
+                      Ssozi Derrick
+                </p>
+                
+      
+            </footer>
+        </div>
+    );
 }
 
 export default App;
