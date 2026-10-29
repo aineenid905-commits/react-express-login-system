@@ -49,8 +49,8 @@ function App() {
             </main>
 
             <footer className="site-footer">
-                <p><p>Developed by Aine Enid,
-                      Ssozi Derrick
+                <p>Developed by Aine Enid,
+                   Ssozi Derrick
                 </p>
                 
       
