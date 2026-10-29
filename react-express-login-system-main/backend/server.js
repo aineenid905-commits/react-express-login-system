@@ -2,54 +2,68 @@
 const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const { MongoClient, ObjectId } = require('mongodb');
 const session = require('express-session');
 const MongoStore = require('connect-mongo').default;
 const bcrypt = require('bcrypt');
-require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const uri = process.env.MONGO_URI;
+const MONGO_URI = process.env.MONGO_URI;
 
 let client;
 let users;
 
+app.set('trust proxy', 1);
+
+// CORS: allow the deployed frontend and local development
 app.use(cors({
     origin: [
+        'https://react-express-login-system-6.onrender.com',
         'http://localhost:5173',
         'http://localhost:5174'
     ],
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(express.json());
 
+// Sessions and cross-site cookies
 app.use(session({
     name: 'login.sid',
     secret: process.env.SESSION_SECRET || 'replace-this-with-a-long-random-secret',
     resave: false,
     saveUninitialized: false,
-    store: MongoStore.create({
-        mongoUrl: uri,
-        dbName: 'loginDB',
-        collectionName: 'sessions'
-    }),
+    store: MONGO_URI
+        ? MongoStore.create({
+            mongoUrl: MONGO_URI,
+            dbName: 'loginDB',
+            collectionName: 'sessions'
+        })
+        : undefined,
     cookie: {
         httpOnly: true,
-        secure: false,
-        sameSite: 'lax',
+        secure: true,
+        sameSite: 'none',
         maxAge: 24 * 60 * 60 * 1000
     }
 }));
 
+// Basic health check
 app.get('/', (req, res) => {
-    res.send('Backend is running!');
+    res.json({
+        success: true,
+        message: 'Backend is running!'
+    });
 });
 
-// Register a new user
+// Register
 app.post('/register', async (req, res) => {
     try {
         const { name, email, password, confirmPassword } = req.body;
@@ -101,7 +115,7 @@ app.post('/register', async (req, res) => {
 
         req.session.save((error) => {
             if (error) {
-                console.error('Session save error:', error);
+                console.error('Registration session error:', error);
                 return res.status(500).json({
                     success: false,
                     message: 'Account created, but session setup failed. Please log in.'
@@ -120,14 +134,22 @@ app.post('/register', async (req, res) => {
         });
     } catch (error) {
         console.error('Registration error:', error);
-        res.status(500).json({
+
+        if (error.code === 11000) {
+            return res.status(409).json({
+                success: false,
+                message: 'An account with this email already exists.'
+            });
+        }
+
+        return res.status(500).json({
             success: false,
             message: 'Registration failed. Please try again.'
         });
     }
 });
 
-// Log in an existing user
+// Login
 app.post('/login', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -185,14 +207,15 @@ app.post('/login', async (req, res) => {
         });
     } catch (error) {
         console.error('Login error:', error);
-        res.status(500).json({
+
+        return res.status(500).json({
             success: false,
             message: 'An error occurred during login.'
         });
     }
 });
 
-// Return the currently logged-in user's profile
+// Get current user's profile
 app.get('/profile', async (req, res) => {
     try {
         if (!req.session.userId) {
@@ -221,60 +244,86 @@ app.get('/profile', async (req, res) => {
             });
         }
 
-        res.json({
+        return res.json({
             id: user._id.toString(),
             name: user.name,
             email: user.email
         });
     } catch (error) {
         console.error('Profile error:', error);
-        res.status(500).json({
+
+        return res.status(500).json({
             success: false,
             message: 'Could not load profile.'
         });
     }
 });
 
-// Log out
+// Logout
 app.post('/logout', (req, res) => {
+    if (!req.session) {
+        res.clearCookie('login.sid', {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'none',
+            path: '/'
+        });
+
+        return res.json({
+            success: true,
+            message: 'Logged out successfully.'
+        });
+    }
+
     req.session.destroy((error) => {
         if (error) {
             console.error('Logout error:', error);
+
             return res.status(500).json({
                 success: false,
                 message: 'Logout failed.'
             });
         }
 
-        res.clearCookie('login.sid');
-        res.json({
+        res.clearCookie('login.sid', {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'none',
+            path: '/'
+        });
+
+        return res.json({
             success: true,
             message: 'Logged out successfully.'
         });
     });
 });
 
+// Start server after MongoDB connects
 async function startServer() {
     try {
-        if (!uri) {
-            throw new Error('MONGO_URI is missing from your .env file.');
+        if (!MONGO_URI) {
+            throw new Error('MONGO_URI is missing from the Render environment variables.');
         }
 
-        client = new MongoClient(uri);
+        client = new MongoClient(MONGO_URI);
         await client.connect();
 
         const db = client.db('loginDB');
         users = db.collection('users');
 
-        await users.createIndex({ email: 1 }, { unique: true });
+        await users.createIndex(
+            { email: 1 },
+            { unique: true }
+        );
 
         console.log('Connected to MongoDB Atlas successfully');
 
-        app.listen(PORT, () => {
-            console.log(`Example app listening on port ${PORT}`);
+        app.listen(PORT, '0.0.0.0', () => {
+            console.log(`Backend is running on port ${PORT}`);
         });
     } catch (error) {
-        console.error('Server startup failed:', error.message);
+        console.error('Server startup failed:', error);
         process.exit(1);
     }
 }
