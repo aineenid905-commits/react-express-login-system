@@ -15,7 +15,14 @@ function App() {
     hasFetched = true;
 
     try {
-      const response = await axios.get('http://localhost:3001/profile', { withCredentials: true });
+      const response = await axios.get(
+  `${import.meta.env.VITE_API_URL}/profile`,
+  { withCredentials: true }
+);
+   // Continue with your existing code here
+} catch (error) {
+    console.error("Profile error:", error);
+}
 
       if (response.data && response.data.email) {
         setUser(response.data);
