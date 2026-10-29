@@ -1,3 +1,4 @@
+
 import { useEffect } from 'react';
 import { useAuth } from './components/AuthContext';
 import axios from 'axios';
@@ -5,41 +6,43 @@ import Login from './components/Login';
 import Protected from './components/Protected';
 import './App.css';
 
-let hasFetched = false; // Prevents unnecessary duplicate requests.
-
 function App() {
-  const { user, setUser } = useAuth();
+    const { user, setUser } = useAuth();
 
-  async function fetchProfile() {
-    if (hasFetched) return;
-    hasFetched = true;
+    useEffect(() => {
+        let cancelled = false;
 
-    try {
-      const response = await axios.get(
-  `${import.meta.env.VITE_API_URL}/profile`,
-  { withCredentials: true }
-);
-   // Continue with your existing code here
-} catch (error) {
-    console.error("Profile error:", error);
-}
+        async function fetchProfile() {
+            try {
+                const response = await axios.get(
+                    `${import.meta.env.VITE_API_URL}/profile`,
+                    { withCredentials: true }
+                );
 
-      if (response.data && response.data.email) {
-        setUser(response.data);
-      } else {
-        setUser(null);
-      }
-    } catch (error) {
-      console.error('There has been an Error', error);
-      setUser(null);
-    }
-  }
+                if (!cancelled) {
+                    if (response.data && response.data.email) {
+                        setUser(response.data);
+                    } else {
+                        setUser(null);
+                    }
+                }
+            } catch (error) {
+                console.error('Profile error:', error);
 
-  useEffect(() => {
-    fetchProfile();
-  }, [setUser]);
+                if (!cancelled) {
+                    setUser(null);
+                }
+            }
+        }
 
-  return user ? <Protected /> : <Login />;
+        fetchProfile();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [setUser]);
+
+    return user ? <Protected /> : <Login />;
 }
 
 export default App;
