@@ -21,8 +21,10 @@ let users;
 app.set('trust proxy', 1);
 
 // CORS: allow the deployed frontend and local development
+
 app.use(cors({
     origin: [
+        'https://react-express-login-system-src.vercel.app',
         'https://react-express-login-system-6.onrender.com',
         'http://localhost:5173',
         'http://localhost:5174'
@@ -31,6 +33,9 @@ app.use(cors({
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
+
+
 
 app.use(express.json());
 
